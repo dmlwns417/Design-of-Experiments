@@ -1,0 +1,374 @@
+---
+title: "101B_final_project_June_2"
+author: "BK, EuijunKim, Kaili"
+date: "6/02/2022"
+output: pdf_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(FrF2)
+library(AlgDesign)
+library(corrplot)
+# # install.packages("randomForest")
+# # install.packages("Vdgraph")
+library(Vdgraph) # To construct Fraction of Design Space plots
+# # setwd("/Users/euijunkim/Library/Mobile Documents/com~apple~CloudDocs/2022 ucla spring quarter/101B/101B final project")
+# # getwd()
+```
+
+
+# Part1: 
+## Quesetion 1: fractional design
+
+### Make the design with runs size 32 and see color map, vif, etc.
+
+```{r}
+set.seed(1000)
+frac.design <- FrF2(nruns = 32, nfactors = 7, randomize = T)
+print(desnum(frac.design))
+design.info(frac.design)$aliased
+
+D <- desnum(frac.design) # Extract the design.
+# Create the model matrix including main effects and two-factor interactions.
+X <- model.matrix(~(A + B + C + D + E + F)^2-1, data.frame(D))
+
+# Create color map on pairwise correlations.
+contrast.vectors.correlations <- cor(X)
+corrplot(contrast.vectors.correlations, type = "full", 
+         tl.col = "black", tl.srt = 90, method = "color",
+         addgrid.col = "gray")
+```
+
+```{r}
+source("CrossValidation_RF.R")
+D.frac <- data.frame(D)
+new_frac.data <- D.frac
+new_frac.data[,1][new_frac.data[,1]==1] <- 1000
+new_frac.data[,1][new_frac.data[,1]==-1] <- 100
+new_frac.data[,2][new_frac.data[,2]==1] <- 6
+new_frac.data[,2][new_frac.data[,2]==-1] <- 2
+new_frac.data[,3][new_frac.data[,3]==1] <- 1
+new_frac.data[,3][new_frac.data[,3]==-1] <- 0
+new_frac.data[,4][new_frac.data[,4]==1] <- 11
+new_frac.data[,4][new_frac.data[,4]==-1] <- 1
+new_frac.data[,5][new_frac.data[,5]==1] <- 0.9
+new_frac.data[,5][new_frac.data[,5]==-1] <- 0.5
+new_frac.data[,6][new_frac.data[,6]==1] <- 0.8
+new_frac.data[,6][new_frac.data[,6]==-1] <- 0.2
+new_frac.data[,7][new_frac.data[,7]==1] <- 1000
+new_frac.data[,7][new_frac.data[,7]==-1] <- 10
+colnames(new_frac.data) <- c("ntree", "mtry", "replace", "nodesize", "classwt", "cutoff", "maxnodes")
+new_data <- new_frac.data
+
+# load("diabetes.RData")
+# new.frac.design_rf <- cv.rf(new_data, y, X) # With the data actual values, we get a CV as a response variable.
+new.frac.design <- new.frac.design_rf # matrix with actual values and CV.
+
+coded.frac.design <- cbind(D.frac,new.frac.design$CV)
+colnames(coded.frac.design) <- c("ntree", "mtry", "replace", "nodesize", "classwt", "cutoff", "maxnodes","CV") 
+coded.frac.design # matrix with coded values and CV.
+```
+
+```{r}
+### use summary() to see significant effects
+model <- lm(CV~.^2, data = coded.frac.design)
+summary(model)
+
+### we could also use DanielPlot() to check significant effets
+par(mfrow = c(1,2))
+DanielPlot(model, half =F, cex.fac = 1, cex.lab = 1, cex.pch = 1, cex.legend = 1)
+DanielPlot(model, half =T, cex.fac = 1, cex.lab = 1, cex.pch = 1, cex.legend = 1)
+
+### based on the result above (summary() and DanielPlot), we make a model.reduced.
+model.reduced <- lm(CV ~ classwt + cutoff + maxnodes + classwt:maxnodes + cutoff:maxnodes +
+      classwt:cutoff, data = coded.frac.design
+  )
+summary(model.reduced)
+
+# q-q and residual plots
+yield.resid <- residuals(model.reduced) 
+pred.yield <- fitted(model.reduced)
+par(mfrow = c(1,3))
+qqnorm(yield.resid); qqline(yield.resid)
+plot(x = pred.yield, y = yield.resid, 
+     xlab = "Predicted", ylab = "Residuals")
+plot(x = 1:32, y = yield.resid, xlab = "Run Order",
+     ylab = "Residuals")
+# In residual plot, we can find one outlier(let's say it's okay), and the variance plots look okay.
+```
+
+### VIF for model.
+
+```{r}
+X.frac <- model.matrix(~(classwt + cutoff + maxnodes + classwt:maxnodes + cutoff:maxnodes +
+      classwt:cutoff)^2-1, data.frame(new_data)) # matrix with main effects and
+var.eff.one <- diag(solve(t(X.frac)%*%X.frac))
+
+results.frac <- data.frame('Var.32run' = var.eff.one, 'VIF.32run' = nrow(X.frac)*var.eff.one)
+print.data.frame(results.frac)
+
+#### VIF shows that cutoff seems to be problematic
+### So, let's get rid of cutoff:maxnodes from the model and make a new.model.reduced.
+### And then create q-q plot and residual plots.
+new.model.reduced <- lm(CV ~ classwt + maxnodes + classwt:maxnodes +
+      classwt:cutoff, data = coded.frac.design
+  )
+summary(new.model.reduced)
+yield.resid <- residuals(new.model.reduced) 
+pred.yield <- fitted(new.model.reduced)
+par(mfrow = c(1,3))
+qqnorm(yield.resid); qqline(yield.resid)
+plot(x = pred.yield, y = yield.resid, 
+     xlab = "Predicted", ylab = "Residuals")
+plot(x = 1:32, y = yield.resid, xlab = "Run Order",
+     ylab = "Residuals")
+
+### Let's see new VIF again
+new.X.frac <- model.matrix(~(classwt + maxnodes + classwt:maxnodes  +
+      classwt:cutoff)^2-1, data.frame(new_data)) # matrix with main effects and
+var.eff.one.tw0 <- diag(solve(t(new.X.frac)%*%new.X.frac))
+
+results.frac <- data.frame('Var.32run' = var.eff.one.tw0, 'VIF.32run' = nrow(new.X.frac)*var.eff.one.tw0)
+print.data.frame(results.frac)
+
+### As a result from new.reduced.model, summary() and VIF do not give a better result.
+### So, for now, I will just go with the first reduced.model.
+```
+
+
+
+## Question1: optimal design
+
+###  Make the design with run size 35 and see color plot
+
+```{r}
+set.seed(1000)
+my.design <- gen.factorial(levels=2, nVars = 7, 
+                              varNames = c("ntree", "mtry", "replace", "nodesize", "classwt","cutoff", "maxnodes"))
+
+opt.design <- optFederov(~.,my.design, nTrials = 35, nRepeats = 1000)
+
+D.opt <- opt.design$design # Extract the design.
+# We can visualize the aliasing in this design using a color map on correlations.
+# Create the model matrix including main effects and two-factor interactions.
+X.opt <- model.matrix(~(ntree + mtry + replace + nodesize + classwt + cutoff + maxnodes)^2-1, data.frame(D.opt)) # matrix with main effects and 2-interaction terms
+
+# Create color map on pairwise correlations.
+contrast.vectors.correlations.opt <- cor(X.opt)
+corrplot(
+  contrast.vectors.correlations.opt,
+  type = "full",
+  addgrid.col = "gray",
+  tl.col = "black",
+  tl.srt = 90,
+  method = "color",
+  tl.cex = 0.8
+)
+```
+
+### VIF for model.
+```{r}
+var.eff.one1 <- diag(solve(t(X.opt)%*%X.opt))
+
+results.opt <- data.frame('Var.35run' = var.eff.one1, 'VIF.35run' = nrow(X.opt)*var.eff.one1)
+print.data.frame(results.opt)
+
+#### VIF looks okay
+```
+
+
+### Use cv.rf function to have a response variable
+
+```{r}
+new_data1 <- D.opt
+new_data1[,1][new_data1[,1]==1] <- 1000
+new_data1[,1][new_data1[,1]==-1] <- 100
+new_data1[,2][new_data1[,2]==1] <- 6
+new_data1[,2][new_data1[,2]==-1] <- 2
+new_data1[,3][new_data1[,3]==1] <- 1
+new_data1[,3][new_data1[,3]==-1] <- 0
+new_data1[,4][new_data1[,4]==1] <- 11
+new_data1[,4][new_data1[,4]==-1] <- 1
+new_data1[,5][new_data1[,5]==1] <- 0.9
+new_data1[,5][new_data1[,5]==-1] <- 0.5
+new_data1[,6][new_data1[,6]==1] <- 0.8
+new_data1[,6][new_data1[,6]==-1] <- 0.2
+new_data1[,7][new_data1[,7]==1] <- 1000
+new_data1[,7][new_data1[,7]==-1] <- 10
+print(new_data1) # data with actual vales
+
+# load("diabetes.RData")
+# new.opt.design.rf <- cv.rf(new_data1, y, X) # With the data acutal values, we get a CV as a response variable.
+new.opt.design <- new.opt.design.rf # matrix with actual values and CV.
+# new.opt.design
+
+extraction.data.coded <- cbind(D.opt,new.opt.design$CV)
+colnames(extraction.data.coded)[8] <- "CV"
+# extraction.data.coded # data with coded values
+
+##### Here, we've got 2 types of data.set ( 1: with actual values 2: with coded.values)
+# new.opt.design # with actual values
+# extraction.data.coded # with coded values
+```
+
+```{r}
+coded.model <- lm(CV~., data = extraction.data.coded)
+summary(coded.model) # Here, we now want to find significant effects
+
+coded.model.int <- lm(CV~.^2, data = extraction.data.coded)
+summary(coded.model.int) # Here, we now want to find significant effects
+alias(coded.model.int)
+
+#### Here, Daniel plot doesn't work, and summary() gives me no info. So, I'm trying to get rid of some factors based on VIF.
+### replace and ntree:cutoff are giving hihg VIF which we saw from the table above.
+coded.model.reduced <- lm(CV~.^2 - replace - ntree:cutoff - nodesize:classwt, data = extraction.data.coded)
+summary(coded.model.reduced)
+### summary(coded.model.reduced) gives us some significant effects
+coded.model.reduced.two <- lm(CV~(classwt + maxnodes + classwt:cutoff + classwt:maxnodes + cutoff:maxnodes), 
+                          data = extraction.data.coded)
+summary(coded.model.reduced.two)
+
+
+# q-q and residual plots
+yield.resid <- residuals(coded.model.reduced.two) 
+pred.yield <- fitted(coded.model.reduced.two)
+par(mfrow = c(1,3))
+qqnorm(yield.resid); qqline(yield.resid)
+plot(x = pred.yield, y = yield.resid, 
+     xlab = "Predicted", ylab = "Residuals")
+plot(x = 1:35, y = yield.resid, xlab = "Run Order",
+     ylab = "Residuals")
+
+### Here, we have problem. The plots look not okay actually..
+```
+
+
+
+
+
+
+
+### TA's
+
+```{r}
+source("CrossValidation_RF.R")
+TAdesign <- data.frame(c(100,550,1000,1000,1000,
+                       100,1000,100,100,100,
+                       100,1000,100,550,100,
+                       1000,1000,1000,100,1000,
+                       550,550)
+,c(2,2,4,6,6,
+   2,2,2,6,6,
+   4,2,6,4,6,
+   6,2,6,2,2,
+   4,6)
+,c(1,0,1,1,0,
+   0,0,0,1,0,
+   0,1,1,0,0,
+   0,0,1,1,1,
+   1,1)
+,c(11,1,1,1,1,
+   1,6,11,1,1,
+   11,11,6,6,11,
+   11,11,11,1,1,
+   6,11)
+,c(0.5,0.5,0.5,0.5,0.9,
+   0.5,0.9,0.9,0.7,0.9,
+   0.9,0.5,0.5,0.7,0.5,
+   0.5,0.7,0.9,0.9,0.9,
+   0.7,0.9)
+,c(0.8,0.2,0.2,0.8,0.2,
+   0.8,0.8,0.2,0.8,0.5,
+   0.8,0.5,0.2,0.5,0.2,
+   0.8,0.2,0.2,0.2,0.8,
+   0.5,0.8)
+,c(10,10,10,1000,1000,
+   1000,10,10,10,10,
+   1000,1000,1000,505,505,
+   10,1000,10,1000,505,
+   505,1000))
+colnames(TAdesign) <- c("ntree", "mtry", "replace",  "nodesize","classwt", "cutoff","maxnodes")
+print(TAdesign, row.names = FALSE)
+
+
+# load("diabetes.RData")
+# TAresults <- cv.rf(TAdesign, y, X)
+
+# TAresults # matrix with CV as a respons variable
+
+TA.coded.data <- TAresults
+TA.coded.data[,1][TA.coded.data[,1]==100] <- -1
+TA.coded.data[,1][TA.coded.data[,1]==550] <- 0
+TA.coded.data[,1][TA.coded.data[,1]==1000] <- 1
+
+TA.coded.data[,2][TA.coded.data[,2]==2] <- -1
+TA.coded.data[,2][TA.coded.data[,2]==4] <- 0
+TA.coded.data[,2][TA.coded.data[,2]==6] <- 1
+
+TA.coded.data[,3][TA.coded.data[,3]==0] <- -1
+TA.coded.data[,3][TA.coded.data[,3]==1] <- 1
+
+TA.coded.data[,4][TA.coded.data[,4]==1] <- -1
+TA.coded.data[,4][TA.coded.data[,4]==6] <- 0
+TA.coded.data[,4][TA.coded.data[,4]==11] <- 1
+
+TA.coded.data[,5][TA.coded.data[,5]==0.5] <- -1
+TA.coded.data[,5][TA.coded.data[,5]==0.7] <- 0
+TA.coded.data[,5][TA.coded.data[,5]==0.9] <- 1
+
+TA.coded.data[,6][TA.coded.data[,6]==0.2] <- -1
+TA.coded.data[,6][TA.coded.data[,6]==0.5] <- 0
+TA.coded.data[,6][TA.coded.data[,6]==0.8] <- 1
+
+TA.coded.data[,7][TA.coded.data[,7]==10] <- -1
+TA.coded.data[,7][TA.coded.data[,7]==505] <- 0
+TA.coded.data[,7][TA.coded.data[,7]==1000] <- 1
+
+
+print(TA.coded.data) # data with coded vales
+```
+
+```{r}
+# # plots
+# yield.resid <- residuals(TA.model) 
+# pred.yield <- fitted(TA.model)
+# par(mfrow = c(1,3))
+# qqnorm(yield.resid); qqline(yield.resid)
+# plot(x = pred.yield, y = yield.resid, 
+#      xlab = "Predicted", ylab = "Residuals")
+# plot(x = 1:22, y = yield.resid, xlab = "Run Order",
+#      ylab = "Residuals")
+```
+
+```{r}
+# # Create color map on pairwise correlations.
+# ta.model_new <- lm(CV~ntree * mtry * replace * nodesize * classwt * cutoff * maxnodes, data = TA.coded.data)
+# summary(ta.model_new)
+# 
+# X.ta <- model.matrix(~(ntree + mtry + replace + nodesize + classwt + cutoff + maxnodes)^2-1, TA.coded.data)
+# contrast.vectors.correlations <- cor(X.ta)
+# corrplot(contrast.vectors.correlations, type = "full", 
+#          tl.col = "black", tl.srt = 90, method = "color",
+#          addgrid.col = "gray")
+# 
+# # 
+# 
+# 
+# # VIF
+# var.eff.one.ta <- diag(solve(t(X.ta)%*%X.ta))
+# 
+# results.ta <- data.frame('Var.22run' = var.eff.one.ta, 'VIF.22run' = nrow(X.ta)*var.eff.one.ta)
+# print.data.frame(results.ta)
+```
+
+
+
+```{r}
+# effects <- 2*(coef(ta.model_new)[-1])
+# qqnorm(effects)
+# text(qqnorm(effects)$x,qqnorm(effects)$y, names(effects))
+# qqline(effects)
+```
+
